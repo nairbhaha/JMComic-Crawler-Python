@@ -1,4 +1,4 @@
-name: 🔍 搜索本子（按关键词搜ID）
+name: 🔍 搜索本子（带封面预览）
 
 on:
   workflow_dispatch:
@@ -8,9 +8,21 @@ on:
         description: '搜索关键词，比如：海贼王 無修正 MANA'
         required: true
 
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
 jobs:
-  search:
+  search-and-deploy:
     runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - uses: actions/checkout@v4
 
@@ -23,7 +35,16 @@ jobs:
         run: |
           pip install jmcomic --upgrade
 
-      - name: 🔍 搜索本子
+      - name: 🔍 搜索并生成页面
         env:
           SEARCH_KEYWORD: ${{ github.event.inputs.SEARCH_KEYWORD }}
         run: python usage/search.py
+
+      - name: 上传到 Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/
+
+      - name: 部署到 Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
