@@ -8,9 +8,8 @@ if not keyword:
     exit(1)
 
 output_dir = Path('site')
-covers_dir = output_dir / 'covers'
 shutil.rmtree(output_dir, ignore_errors=True)
-covers_dir.mkdir(parents=True, exist_ok=True)
+output_dir.mkdir(parents=True, exist_ok=True)
 
 client = JmOption.default().new_jm_client()
 
@@ -30,17 +29,13 @@ for album_id, title in page:
     try:
         detail = client.get_album_detail(album_id)
 
-        # 下载封面
-        cover_path = covers_dir / f'{album_id}.jpg'
-        try:
-            client.download_album_cover(album_id, str(cover_path))
-        except Exception:
-            cover_path = None
+        # 封面 URL（不下载直接用 CDN 链接，加载失败显示占位图）
+        cover_url = JmcomicText.get_album_cover_url(album_id)
 
-        # 标签处理
+        # 标签
         tags = detail.tags if hasattr(detail, 'tags') and detail.tags else []
         if isinstance(tags, list):
-            tags = tags[:6]  # 最多6个标签
+            tags = tags[:6]
 
         results.append({
             'id': str(album_id),
@@ -48,7 +43,7 @@ for album_id, title in page:
             'author': detail.author if hasattr(detail, 'author') else '?',
             'page_count': str(detail.page_count) if hasattr(detail, 'page_count') else '?',
             'tags': tags,
-            'has_cover': cover_path is not None,
+            'cover_url': cover_url,
         })
         print(f'  ✓ [{album_id}] {title[:40]}')
     except Exception as e:
@@ -61,8 +56,7 @@ print(f'✅ 成功: {len(results)}, 失败: {failed}')
 
 def esc(text):
     """HTML 转义"""
-    if not isinstance(text, str):
-        text = str(text)
+    text = str(text)
     return text.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('"', '&quot;')
 
 cards_html = ''
@@ -71,17 +65,14 @@ for r in results:
         f'<span class="tag">{esc(t)}</span>'
         for t in (r['tags'] or [])
     )
-    cover_html = (
-        f'<img class="cover" src="covers/{r["id"]}.jpg" alt="{esc(r["title"])}" loading="lazy">'
-        if r['has_cover'] else
-        f'<div class="cover placeholder">📚</div>'
-    )
-
     cards_html += f'''
     <div class="card" data-id="{r['id']}">
-      {cover_html}
+      <div class="cover-wrap">
+        <img class="cover" src="{esc(r['cover_url'])}" alt="{esc(r['title'])}" loading="lazy"
+             onerror="this.parentElement.innerHTML='<div class=\\'cover placeholder\\'>📚<\\/div>'">
+      </div>
       <div class="info">
-        <div class="id-badge" onclick="copyId('{r['id']}')" title="点击复制 ID">ID: {r['id']} 📋</div>
+        <div class="id-badge" onclick="copyId('{r['id']}')" title="点击复制 ID">📋 ID: {r['id']}</div>
         <div class="title">{esc(r['title'])}</div>
         <div class="meta">👤 {esc(r['author'])} · 📄 {r['page_count']} 页</div>
         <div class="tags">{tags_html}</div>
@@ -107,10 +98,11 @@ body {{
   text-align: center;
   padding: 40px 20px 30px;
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+  border-bottom: 1px solid #2a2a35;
 }}
 .header h1 {{ font-size: 28px; margin-bottom: 8px; }}
-.header .sub {{ color: #888; font-size: 14px; }}
-.count {{ color: #f0c040; }}
+.header .sub {{ color: #999; font-size: 14px; }}
+.count {{ color: #f0c040; font-weight: 700; }}
 .grid {{
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
@@ -127,12 +119,18 @@ body {{
   border: 1px solid #2a2a35;
 }}
 .card:hover {{ transform: translateY(-4px); box-shadow: 0 8px 30px rgba(0,0,0,0.4); }}
-.cover {{
+.cover-wrap {{
+  position: relative;
   width: 100%;
   aspect-ratio: 3/4;
+  background: #2a2a35;
+  overflow: hidden;
+}}
+.cover {{
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   display: block;
-  background: #2a2a35;
 }}
 .cover.placeholder {{
   display: flex;
@@ -140,6 +138,8 @@ body {{
   justify-content: center;
   font-size: 48px;
   color: #555;
+  width: 100%;
+  height: 100%;
 }}
 .info {{ padding: 14px; }}
 .id-badge {{
@@ -197,6 +197,7 @@ body {{
   position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
   background: #333; color: #fff; padding: 10px 24px; border-radius: 8px;
   font-size: 14px; opacity: 0; transition: opacity 0.3s; z-index: 999;
+  pointer-events: none;
 }}
 .toast.show {{ opacity: 1; }}
 </style>
@@ -204,7 +205,7 @@ body {{
 <body>
 <div class="header">
   <h1>🔍 <span class="count">{len(results)}</span> 个结果 · <span style="color:#888">{esc(keyword)}</span></h1>
-  <div class="sub">共找到 {total} 个相关本子，点击 ID 复制，点击下载跳转到 workflow</div>
+  <div class="sub">共找到 {total} 个相关本子 · 点击 ID 复制 · 点击下载跳转到 workflow</div>
 </div>
 <div class="grid">
   {cards_html if results else '<div class="empty">😕 没有找到结果，换个关键词试试</div>'}
@@ -216,7 +217,9 @@ function copyId(id) {{
     const badge = document.querySelector(`.card[data-id="${{id}}"] .id-badge`);
     if (badge) {{ badge.textContent = '✅ 已复制!'; badge.classList.add('copied'); }}
     showToast('已复制 ID: ' + id);
-    setTimeout(() => {{ if (badge) {{ badge.textContent = 'ID: ' + id + ' 📋'; badge.classList.remove('copied'); }} }}, 2000);
+    setTimeout(() => {{ if (badge) {{ badge.textContent = '📋 ID: ' + id; badge.classList.remove('copied'); }} }}, 2000);
+  }}).catch(() => {{
+    showToast('复制失败，请手动记下 ID: ' + id);
   }});
 }}
 function showToast(msg) {{
@@ -228,6 +231,9 @@ function showToast(msg) {{
 </body>
 </html>'''
 
-write(output_dir / 'index.html', html)
+# 用标准 Python 写文件
+with open(output_dir / 'index.html', 'w', encoding='utf-8') as f:
+    f.write(html)
+
 print(f'✅ 页面已生成: {output_dir / "index.html"}')
 print(f'🌐 即将部署到 GitHub Pages...')
